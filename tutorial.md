@@ -52,7 +52,7 @@ project(Roguelike)
 find_package(Curses REQUIRED)
 
 # Add the source files
-add_executable(roguelike src/main.cpp src/game.cpp src/player.cpp src/dungeon.cpp src/monster.cpp)
+add_executable(roguelike src/main.cpp src/game.cpp src/player.cpp src/dungeon.cpp src/monster.cpp src/item.cpp src/messagelog.cpp)
 
 # Link the ncurses library
 target_link_libraries(roguelike ${CURSES_LIBRARIES})
@@ -552,6 +552,342 @@ void Game::loop() {
 }
 ```
 With these changes, you'll see monsters moving randomly around the dungeon. This is a basic foundation that you can build upon with more complex AI and combat mechanics.
+
+## A Basic Combat System
+
+Now that we have a player and monsters, let's make them fight! We'll implement a simple, turn-based combat system.
+
+### Health and Attacks
+
+First, let's add health points (HP) and an attack method to both our `Player` and `Monster` classes.
+
+In `src/player.h`:
+```cpp
+// src/player.h
+class Player {
+public:
+    // ...
+    void attack(class Monster& target);
+    int get_hp() const { return hp; }
+    void take_damage(int damage);
+private:
+    int hp = 100;
+    int attack_power = 10;
+    // ...
+};
+```
+
+In `src/monster.h`:
+```cpp
+// src/monster.h
+class Monster {
+public:
+    // ...
+    void attack(class Player& target);
+    int get_hp() const { return hp; }
+    void take_damage(int damage);
+private:
+    int hp = 20;
+    int attack_power = 5;
+    // ...
+};
+```
+*Note: We use a forward declaration `class Monster&` and `class Player&` to avoid circular dependencies between the header files.*
+
+Now, let's implement these methods.
+
+In `src/player.cpp`:
+```cpp
+// src/player.cpp
+#include "monster.h" // Include monster.h here
+
+// ...
+void Player::attack(Monster& target) {
+    target.take_damage(attack_power);
+}
+
+void Player::take_damage(int damage) {
+    hp -= damage;
+}
+```
+
+In `src/monster.cpp`:
+```cpp
+// src/monster.cpp
+#include "player.h" // Include player.h here
+
+// ...
+void Monster::attack(Player& target) {
+    target.take_damage(attack_power);
+}
+
+void Monster::take_damage(int damage) {
+    hp -= damage;
+}
+```
+
+### Turn-based Gameplay
+
+We need to modify our game loop to be turn-based. The player takes an action, and then each monster takes an action.
+
+In `src/game.cpp`, we'll change the game loop to only process one key press at a time and then let the monsters have their turn.
+
+```cpp
+// src/game.cpp
+
+// In Game::loop()
+void Game::loop() {
+    while (is_running) {
+        // Render the game state before waiting for input
+        clear();
+        dungeon.draw();
+        player.draw();
+        for (auto& monster : monsters) {
+            if (monster.get_hp() > 0) {
+                monster.draw();
+            }
+        }
+        refresh();
+
+        // Get user input
+        int ch = getch();
+
+        // Player's turn
+        bool player_turn_ended = false;
+        switch (ch) {
+            case 'q': is_running = false; break;
+            case KEY_UP:
+                // Check for monster to attack
+                // ...
+                player.move(0, -1);
+                player_turn_ended = true;
+                break;
+            // ... other movement keys
+        }
+
+        // Monsters' turn
+        if (player_turn_ended) {
+            for (auto& monster : monsters) {
+                if (monster.get_hp() > 0) {
+                    // Simple AI: if next to player, attack, otherwise move randomly.
+                    // This logic needs to be implemented.
+                    monster.move_randomly();
+                }
+            }
+        }
+
+        // Remove dead monsters
+        monsters.erase(std::remove_if(monsters.begin(), monsters.end(),
+            [](const Monster& m) {
+                return m.get_hp() <= 0;
+            }), monsters.end());
+
+        if (player.get_hp() <= 0) {
+            is_running = false;
+            // Game over message
+        }
+    }
+    // ...
+}
+```
+This is a more structured game loop. To make attacking work, you'd have to check if the player's move would land on a monster, and if so, call `player.attack()` instead of `player.move()`. Similarly, monsters would check if they are adjacent to the player before attacking.
+
+This is a starting point for a combat system. You can expand it by adding more complex AI, different attack types, and a more robust turn-handling system.
+
+## Items and Inventory
+
+A roguelike is more fun with loot! Let's add items that the player can pick up and use.
+
+### The `Item` class
+
+First, let's define a simple `Item` class in a new `src/item.h` file.
+
+```cpp
+// src/item.h
+#pragma once
+#include <string>
+
+class Item {
+public:
+    Item(std::string name, char symbol);
+
+    void draw(int x, int y);
+    const std::string& get_name() const;
+
+private:
+    std::string name;
+    char symbol;
+};
+```
+
+And its implementation in `src/item.cpp`:
+```cpp
+// src/item.cpp
+#include "item.h"
+#include <ncurses.h>
+
+Item::Item(std::string name, char symbol) : name(name), symbol(symbol) {}
+
+void Item::draw(int x, int y) {
+    mvaddch(y, x, symbol);
+}
+
+const std::string& Item::get_name() const {
+    return name;
+}
+```
+
+### Items in the Dungeon
+
+We need a way to place items on the dungeon floor. We'll modify the `Dungeon` class to hold a collection of items.
+
+In `src/dungeon.h`, we'll store items and their locations.
+```cpp
+// src/dungeon.h
+#include <vector>
+#include <map>
+#include "item.h"
+
+// ... in Dungeon class
+private:
+    std::map<std::pair<int, int>, Item> items;
+```
+We can then add a function to place items in the dungeon and modify the `draw` function to show them.
+
+### Player Inventory
+
+Let's give our player an inventory.
+
+In `src/player.h`:
+```cpp
+// src/player.h
+#include <vector>
+#include "item.h"
+
+class Player {
+    // ...
+private:
+    std::vector<Item> inventory;
+};
+```
+
+### Picking up Items
+
+To pick up an item, the player needs a "get" action. This would be triggered by a key press in the game loop. The logic would be:
+1. Check if there's an item at the player's current location.
+2. If so, add it to the player's inventory.
+3. Remove the item from the dungeon floor.
+
+Here's a simplified version of what you could add to `Game::loop()` in `src/game.cpp`:
+```cpp
+// in Game::loop()
+case 'g': // 'g' for get
+    // Logic to find an item at player's (x, y) in the dungeon's item list
+    // If an item is found:
+    //   player.add_to_inventory(found_item);
+    //   dungeon.remove_item(player_x, player_y);
+    player_turn_ended = true;
+    break;
+```
+
+This section provides a conceptual overview. A full implementation would require more detailed handling of data structures and game state, but this is a good starting point for adding a rich item and inventory system to your game.
+
+## UI Enhancements
+
+A good user interface is crucial for a roguelike. Let's add a status bar to show player information and a message log to display game events.
+
+### The Status Bar
+
+The status bar will display the player's current HP. We can dedicate the top line of the screen for this.
+
+Let's modify our `Game::loop()` to include a call to a new `draw_status_bar()` method.
+
+In `src/game.h`:
+```cpp
+// src/game.h
+class Game {
+    // ...
+private:
+    void draw_status_bar();
+    // ...
+};
+```
+
+In `src/game.cpp`:
+```cpp
+// src/game.cpp
+void Game::draw_status_bar() {
+    mvprintw(0, 0, "HP: %d / 100", player.get_hp());
+}
+
+void Game::loop() {
+    while (is_running) {
+        // ...
+        clear();
+        draw_status_bar();
+        dungeon.draw();
+        // ...
+        refresh();
+    }
+    // ...
+}
+```
+Now, the player's HP will be displayed at the top of the screen and will update whenever the screen is refreshed.
+
+### The Message Log
+
+The message log will display messages about what's happening in the game, like "You hit the orc." or "The goblin misses you." We can display the last few messages at the bottom of the screen.
+
+Let's create a simple `MessageLog` class.
+
+In a new `src/messagelog.h`:
+```cpp
+// src/messagelog.h
+#pragma once
+#include <vector>
+#include <string>
+
+class MessageLog {
+public:
+    void add(const std::string& message);
+    void draw();
+private:
+    std::vector<std::string> messages;
+};
+```
+And `src/messagelog.cpp`:
+```cpp
+// src/messagelog.cpp
+#include "messagelog.h"
+#include <ncurses.h>
+
+void MessageLog::add(const std::string& message) {
+    messages.push_back(message);
+    if (messages.size() > 5) { // Keep only the last 5 messages
+        messages.erase(messages.begin());
+    }
+}
+
+void MessageLog::draw() {
+    int y = LINES - messages.size();
+    for (const auto& msg : messages) {
+        mvprintw(y++, 0, msg.c_str());
+    }
+}
+```
+Now, integrate this into the `Game` class. Add a `MessageLog` member to `Game` and call its `draw()` method in the game loop. You can add messages to the log from your combat functions.
+
+For example, in `Player::attack`:
+```cpp
+// src/player.cpp
+void Player::attack(Monster& target) {
+    target.take_damage(attack_power);
+    // game.message_log.add("You attack the monster!");
+}
+```
+*Note: You would need to pass a reference to the `Game` object or the `MessageLog` to the `attack` method to make this work.*
+
+With these UI enhancements, the game becomes much more informative and engaging for the player.
 
 ## Putting It All Together
 
