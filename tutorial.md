@@ -889,6 +889,197 @@ void Player::attack(Monster& target) {
 
 With these UI enhancements, the game becomes much more informative and engaging for the player.
 
+## Advanced Topics
+
+Now we'll dive into some more advanced topics that are staples of the roguelike genre.
+
+### Procedural Dungeon Generation
+
+Instead of a single, static room, let's generate a new, random dungeon every time we play. We'll use a simple version of the "rooms and corridors" algorithm.
+
+The basic idea is:
+1.  Randomly place a number of rooms on the map.
+2.  Ensure the rooms don't overlap.
+3.  Carve corridors between the rooms to connect them.
+
+Let's modify our `Dungeon` class to implement this.
+
+In `src/dungeon.h`, we can add a `generate()` method.
+```cpp
+// src/dungeon.h
+class Dungeon {
+public:
+    Dungeon(int width, int height);
+    void generate(); // New method
+    // ...
+private:
+    void create_room(int x, int y, int width, int height);
+    void create_h_corridor(int x1, int x2, int y);
+    void create_v_corridor(int y1, int y2, int x);
+    // ...
+};
+```
+
+The `generate()` method in `src/dungeon.cpp` would look something like this:
+```cpp
+// src/dungeon.cpp
+void Dungeon::generate() {
+    // Fill the map with walls
+    map.assign(height, std::vector<Tile>(width, Tile::Wall));
+
+    // Create a few rooms
+    create_room(10, 5, 8, 4);
+    create_room(30, 10, 10, 6);
+
+    // Connect them with corridors
+    create_h_corridor(18, 30, 7);
+    create_v_corridor(7, 10, 30);
+}
+```
+In the `Dungeon` constructor, you would call `generate()` instead of creating the static room.
+
+The `create_room`, `create_h_corridor`, and `create_v_corridor` methods are straightforward implementations that change `Tile::Wall` to `Tile::Floor` for the specified regions.
+
+A true procedural generator would randomly determine the number, size, and position of rooms, and have more sophisticated logic for connecting them. This example gives you the fundamental building blocks to create your own. Studying `dungeon_generate.cpp` in the Umoria codebase will provide a more in-depth example.
+
+### A Basic Magic System
+
+Let's give our player some magical abilities. We'll implement a simple system for casting spells.
+
+#### Mana and Spells
+
+First, our player needs a resource to cast spells: mana. Let's add it to the `Player` class in `src/player.h`.
+
+```cpp
+// src/player.h
+class Player {
+    // ...
+private:
+    int mana = 50;
+    // ...
+};
+```
+
+Next, we'll define a `Spell` struct. For simplicity, we can define it directly in `src/game.h`.
+```cpp
+// src/game.h
+struct Spell {
+    std::string name;
+    int mana_cost;
+    // other properties like range, damage, etc.
+};
+```
+
+#### Learning and Casting Spells
+
+Let's give the player a spellbook (a `std::vector` of `Spell`s) and a way to cast spells.
+
+In `src/player.h`:
+```cpp
+// src/player.h
+#include <vector>
+#include "game.h" // For Spell struct
+
+class Player {
+public:
+    // ...
+    void cast_spell(const Spell& spell, Monster& target);
+private:
+    std::vector<Spell> spellbook;
+    // ...
+};
+```
+
+In the `Player` constructor (`src/player.cpp`), we can add a simple "Magic Missile" spell to the player's spellbook.
+```cpp
+// src/player.cpp
+Player::Player(int x, int y) : x(x), y(y) {
+    spellbook.push_back({"Magic Missile", 5});
+}
+```
+
+The `cast_spell` method would look something like this:
+```cpp
+// src/player.cpp
+void Player::cast_spell(const Spell& spell, Monster& target) {
+    if (mana >= spell.mana_cost) {
+        mana -= spell.mana_cost;
+        // Apply spell effect, e.g., damage the target
+        target.take_damage(20); // Example damage
+    }
+}
+```
+
+In the game loop, you would add a new key for casting spells. This would typically open a menu showing the player's known spells, let them choose one, and then let them target a monster.
+
+This is a very basic magic system. The Umoria codebase has a much more sophisticated system with different spell types, failure chances, and a wide variety of effects, which can serve as a great source of inspiration for expanding your own.
+
+### Saving and Loading
+
+A persistent world needs a way to save progress. Let's implement a basic save and load system. We'll serialize the game state into a binary file.
+
+#### Serialization
+
+Serialization is the process of converting an object's state into a format that can be stored or transmitted. We'll write the raw bytes of our game data to a file.
+
+Let's add `save()` and `load()` methods to our `Game` class.
+
+In `src/game.h`:
+```cpp
+// src/game.h
+class Game {
+public:
+    // ...
+    void save();
+    void load();
+    // ...
+};
+```
+
+In `src/game.cpp`, we'll use `std::ofstream` and `std::ifstream` for file I/O.
+
+```cpp
+// src/game.cpp
+#include <fstream>
+
+void Game::save() {
+    std::ofstream save_file("savegame.dat", std::ios::binary);
+    // Write player data
+    // save_file.write(reinterpret_cast<char*>(&player), sizeof(Player));
+    // Write dungeon data, monster data, etc.
+    save_file.close();
+}
+
+void Game::load() {
+    std::ifstream load_file("savegame.dat", std::ios::binary);
+    if (load_file) {
+        // Read player data
+        // load_file.read(reinterpret_cast<char*>(&player), sizeof(Player));
+        // Read dungeon data, monster data, etc.
+    }
+    load_file.close();
+}
+```
+*Note: The commented-out lines show the basic concept. A real implementation is more complex. Directly writing and reading objects like this can be problematic due to pointers, virtual functions, and padding. The Umoria codebase uses a more robust method of writing each data member individually.*
+
+#### Integrating Save/Load
+
+You can trigger `save()` and `load()` from the game loop with specific key presses. For example, you could have the game automatically load `savegame.dat` if it exists on startup, and save the game when the player quits.
+
+In `main.cpp`:
+```cpp
+// src/main.cpp
+int main(int argc, char *argv[]) {
+    Game game;
+    game.load(); // Load the game at the start
+    game.loop();
+    // game.save(); // Optionally save on exit
+    return 0;
+}
+```
+
+Saving and loading is a complex topic, especially in C++. This example provides a high-level overview. For a robust solution, you'll want to look into serialization libraries or study how existing games like Umoria handle it by carefully writing and reading each piece of data.
+
 ## Putting It All Together
 
 Now that we have all the basic components of our roguelike game, let's put it all together and compile it.
